@@ -1,0 +1,104 @@
+name: CI and CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  # ==============
+  # CI task
+  # ==============
+  quality-check:
+    name: Quality Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Shallow clones should be disabled for a better relevancy of analysis
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v1
+        with:
+          java-version: 17
+
+      - name: Cache Gradle packages
+        id: gradle-cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: download dependencies
+        if: ${{ steps.gradle-cache.outputs.cache-hit != 'true' }}
+        working-directory: ./kbazaar
+        run: ./gradlew dependencies
+
+      - name: Run test
+        working-directory: ./kbazaar
+        run: make test
+
+      - name: Build and analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        working-directory: ./kbazaar
+        run: make sonar
+
+  build-and-push-docker-image:
+    name: Build docker image and push to repositories
+    runs-on: ubuntu-latest
+    needs: quality-check
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup SHA
+        run: echo "GITHUB_SHA=${GITHUB_SHA}" >> $GITHUB_ENV
+
+      - name: Login ghcr.io
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: ./kbazaar
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/kbtg-kampus-classnest-se-java/workshop-group-2:${{ env.GITHUB_SHA }}
+
+      - name: Image digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
+  # ==============
+  # CD task
+  # ==============
+  gitops-versioning:
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker-image
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: config git
+        run: |
+          git --version
+          git config user.name "robot"
+          git config user.email "root@aorjoa.link"
+      - name: change image tag
+        run: |
+          sed -i -E "s/ghcr.io\/kbtg-kampus-classnest-se-java\/workshop-group-2.*$/ghcr.io\/kbtg-kampus-classnest-se-java\/workshop-group-2:${GITHUB_SHA}/" infra/gitops/dev/deployment.yml
+          git add infra/gitops/dev/deployment.yml
+          git commit -m "[skip actions] 🤖 change docker image version to ${GITHUB_SHA}"
+      - name: push changes
+        uses: ad-m/github-push-action@master
+        with:
+          branch: main

@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: group-2-dev
+spec:
+  selector:
+    matchLabels:
+      app: api
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: kbazaar-api
+          image: ghcr.io/kbtg-kampus-classnest-se-java/workshop-group-2:a1f45f484f0cfea60221b637b01244cba858a1f2
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: db.url
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: db.username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: db.password
+            - name: ENABLED_FEATURE_PROMOTION_LIST_API
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: enabled.feature.promotion.list.api
+            - name: ENABLE_SHIPPING_FEE
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: enabled.shipping.fee
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
